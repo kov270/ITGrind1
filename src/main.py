@@ -1,5 +1,12 @@
+from src.enums import AccountStatus, AccountType, AssetType, Currency
+from datetime import datetime
+from src.transactions import demo_transactions
+from src.audit import demo_audit
+
 from src.models import (
+    Bank,
     BankAccount,
+    Client,
     InvestmentAccount,
     PremiumAccount,
     SavingsAccount,
@@ -12,8 +19,86 @@ from src.utils import (
 
 
 def main():
+    print("Банк и клиент:")
+    # Демонстрационные часы: меняем время без ожидания настоящей ночи.
+    demo_now = datetime(2000, 1, 1, 12)
+    bank = Bank(now=lambda: demo_now)
+    client = Client("Иван Петров Сергеевич", 25, {"phone": "+79991234567"})
+    bank.add_client(client, "example-password")
+    print("Вход выполнен:", bank.authenticate_client(client.client_id, "example-password"))
+    account = bank.open_account(client.client_id, balance=0)
+    bank.freeze_account(client.client_id, account.account_number)
+    print("Замороженные счета:", bank.search_accounts(client.client_id, status=AccountStatus.FROZEN))
+    try:
+        account.withdraw(10)
+    except AccountFrozenError as error:
+        print("Снятие с замороженного счёта Ивана отклонено:", error)
+    bank.unfreeze_account(client.client_id, account.account_number)
+    account.deposit(100)
+    print("После разморозки пополнение разрешено:", account)
+    account.withdraw(100)
+    bank.close_account(client.client_id, account.account_number)
+    print("Закрытые счета:", bank.search_accounts(client.client_id, status=AccountStatus.CLOSED))
+
+    print("\nЗащита банка (демонстрационные часы):")
+    savings_in_bank = bank.open_account(client.client_id, AccountType.SAVINGS, balance=100)
+    demo_now = datetime(2000, 1, 2, 0)
+    try:
+        savings_in_bank.deposit(10)
+    except InvalidOperationError as error:
+        print("Ночная операция отклонена:", error)
+    print("Поиск ночью доступен:", len(bank.search_accounts(client.client_id)))
+    demo_now = datetime(2000, 1, 2, 5)
+    print("Пополнение в 05:00:", savings_in_bank.deposit(10))
+
+    blocked_client = Client("Анна Смирнова", 30, {"phone": "+79990000000"})
+    bank.add_client(blocked_client, "another-example-password")
+    print(
+        "Успешный вход Анны:",
+        bank.authenticate_client(blocked_client.client_id, "another-example-password"),
+    )
+    anna_account = bank.open_account(blocked_client.client_id, AccountType.PREMIUM, balance=500)
+    bank.freeze_account(blocked_client.client_id, anna_account.account_number)
+    try:
+        anna_account.withdraw(100)
+    except AccountFrozenError as error:
+        print("Снятие с замороженного счёта Анны отклонено:", error)
+    bank.unfreeze_account(blocked_client.client_id, anna_account.account_number)
+    for attempt in range(3):
+        print(
+            f"Неверный вход Анны, попытка {attempt + 1}:",
+            bank.authenticate_client(blocked_client.client_id, "wrong"),
+        )
+    print("После трёх ошибок:", blocked_client.status)
+    print(
+        "Правильный пароль после блокировки:",
+        bank.authenticate_client(blocked_client.client_id, "another-example-password"),
+    )
+    try:
+        anna_account.deposit(100)
+    except InvalidOperationError as error:
+        print("Операция заблокированного клиента отклонена:", error)
+    print("Журнал подозрительных действий:", bank.suspicious_actions)
+
+    print("\nОтчёты банка:")
+    report_client = Client("Мария Орлова", 28, {"phone": "+79991111111"})
+    bank.add_client(report_client, "report-example-password")
+    print("Неверный вход Марии:", bank.authenticate_client(report_client.client_id, "wrong"))
+    print(
+        "Успешный вход Марии после ошибки:",
+        bank.authenticate_client(report_client.client_id, "report-example-password"),
+    )
+    bank.open_account(report_client.client_id, balance=200)
+    bank.open_account(report_client.client_id, balance=50, currency=Currency.USD)
+    try:
+        bank.freeze_account(report_client.client_id, savings_in_bank.account_number)
+    except InvalidOperationError as error:
+        print("Попытка Марии заморозить счёт Ивана отклонена:", error)
+    print("Свободный баланс по валютам:", bank.get_total_balance())
+    print("Рейтинг клиентов в RUB:", bank.get_clients_ranking(Currency.RUB))
+
     active = BankAccount("Иван", balance=1000)
-    frozen = BankAccount("Анна", balance=500, status="frozen")
+    frozen = BankAccount("Анна", balance=500, status=AccountStatus.FROZEN)
     print(active)
     print(frozen)
 
@@ -48,6 +133,18 @@ def main():
     except InvalidOperationError as error:
         print("Не удалось снять ниже минимального остатка:", error)
 
+    second_savings = SavingsAccount(
+        "Дмитрий", balance=100, monthly_rate="0.015", min_balance=0
+    )
+    second_savings.deposit(50)
+    second_savings.apply_monthly_interest()
+    print("Второй накопительный счёт после пополнения и начисления 1.5%:")
+    print(second_savings)
+    try:
+        second_savings.withdraw(200)
+    except InsufficientFundsError as error:
+        print("Не удалось снять больше баланса:", error)
+
     print("\nРазница лимитов обычного и премиального счетов:")
     ordinary = BankAccount("Павел", balance=300000)
     premium = PremiumAccount("Павел", balance=300000)
@@ -80,14 +177,30 @@ def main():
 
     print("\nИнвестиционный счёт:")
     investment = InvestmentAccount("Мария", balance=10000)
-    investment.invest("stocks", 5000)
-    investment.invest("bonds", 3000)
-    investment.invest("etf", 1000)
+    investment.invest(AssetType.STOCKS, 5000)
+    investment.invest(AssetType.BONDS, 3000)
+    investment.invest(AssetType.ETF, 1000)
     print(investment)
 
-    growth_rates = {"stocks": "0.10", "bonds": "0.04", "etf": "0.07"}
+    growth_rates = {AssetType.STOCKS: "0.10", AssetType.BONDS: "0.04", AssetType.ETF: "0.07"}
     print("Ожидаемый годовой прирост:",
           investment.project_yearly_growth(growth_rates), investment.currency)
+
+    second_investment = InvestmentAccount("Елена", balance=5000)
+    second_investment.invest(AssetType.BONDS, 2000)
+    second_investment.invest(AssetType.ETF, 1000)
+    second_investment.withdraw(500)
+    print("Второй инвестиционный счёт после вложений и снятия свободных денег:")
+    print(second_investment)
+    print(
+        "Ожидаемый годовой прирост второго портфеля:",
+        second_investment.project_yearly_growth(growth_rates),
+        second_investment.currency,
+    )
+
+
+    demo_transactions()
+    demo_audit()
 
 
 if __name__ == "__main__":

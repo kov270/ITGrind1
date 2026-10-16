@@ -1,7 +1,31 @@
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, getcontext
+from hashlib import pbkdf2_hmac
+from hmac import compare_digest
+from secrets import token_bytes
+from enum import Enum
 
+from .enums import AssetType, Currency
+
+
+# Общая точность вычислений при загрузке модулей проекта.
+getcontext().prec = 50
 
 CENT = Decimal("0.01")
+
+
+def create_password_hash(password):
+    if type(password) != str or not password.strip():
+        raise InvalidOperationError("Пароль должен быть непустой строкой.")
+    salt = token_bytes(16)
+    password_hash = pbkdf2_hmac("sha256", password.encode(), salt, 600_000)
+    return salt, password_hash
+
+
+def verify_password(password, salt, password_hash):
+    if type(password) != str:
+        return False
+    candidate = pbkdf2_hmac("sha256", password.encode(), salt, 600_000)
+    return compare_digest(candidate, password_hash)
 
 
 class InvalidOperationError(ValueError):
@@ -41,9 +65,7 @@ def round_money(value):
     value = to_decimal(value)
     if abs(value) >= Decimal("1e18"):
         raise InvalidOperationError("Сумма должна быть меньше 10^18 по модулю.")
-    with localcontext() as context:
-        context.prec = 50
-        return value.quantize(CENT, rounding=ROUND_HALF_UP)
+    return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def check_balance(balance):
@@ -87,11 +109,45 @@ def check_text(text):
     return text
 
 
+def check_enum(value, enum_class, uppercase=False):
+    if isinstance(value, enum_class):
+        return value
+    if isinstance(value, Enum):
+        raise InvalidOperationError(f"Ожидается значение {enum_class.__name__}.")
+    value = check_text(value)
+    if uppercase:
+        value = value.upper()
+    try:
+        return enum_class(value)
+    except ValueError:
+        raise InvalidOperationError(f"Неизвестное значение {enum_class.__name__}: {value}") from None
+
+
+def check_currency(currency):
+    return check_enum(currency, Currency, uppercase=True)
+
+
 def check_asset(asset):
-    asset = check_text(asset)
-    if asset not in ["stocks", "bonds", "etf"]:
-        raise InvalidOperationError("Допустимые активы: stocks, bonds, etf.")
-    return asset
+    return check_enum(asset, AssetType)
+
+
+def check_age(age):
+    if type(age) != int:
+        raise InvalidOperationError("Возраст должен быть целым числом.")
+    if age < 18:
+        raise InvalidOperationError("Клиенту должно быть не меньше 18 лет.")
+    return age
+
+
+def check_contacts(contacts):
+    if type(contacts) != dict or not contacts:
+        raise InvalidOperationError("Укажите контакты непустым словарём.")
+
+    checked_contacts = {}
+    for name, value in contacts.items():
+        name = check_text(name)
+        checked_contacts[name] = check_text(value)
+    return checked_contacts
 
 
 def check_growth_rates(growth_rates):
