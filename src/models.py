@@ -41,6 +41,7 @@ class AbstractAccount(ABC):
         self.status = status
         # Для счетов, открытых через Bank, здесь будет проверка доступа и времени.
         self._bank_guard = None
+        self._bank_balance_logger = None
 
     @abstractmethod
     def deposit(self, amount):
@@ -101,12 +102,17 @@ class BankAccount(AbstractAccount):
         if self.status != AccountStatus.ACTIVE:
             raise InvalidOperationError("Неизвестный статус счёта.")
 
+    def _record_balance_change(self, action):
+        if self._bank_balance_logger is not None:
+            self._bank_balance_logger(action)
+
     def deposit(self, amount):
         self.check_status()
         amount = check_amount(amount)
         if amount == 0:
             raise InvalidOperationError("Сумма пополнения должна быть больше нуля.")
         self._balance = check_balance(self._balance + amount)
+        self._record_balance_change(OperationAction.DEPOSIT)
         return self._balance
 
     def withdraw(self, amount):
@@ -119,6 +125,7 @@ class BankAccount(AbstractAccount):
         if amount > self.withdraw_limit:
             raise InvalidOperationError("Превышен лимит снятия средств.")
         self._balance -= amount
+        self._record_balance_change(OperationAction.WITHDRAW)
         return self._balance
 
     def get_account_info(self):
@@ -212,6 +219,7 @@ class PremiumAccount(BankAccount):
             raise InsufficientFundsError("Превышен лимит овердрафта.")
 
         self._balance = check_balance(new_balance)
+        self._record_balance_change(OperationAction.WITHDRAW)
         return self._balance
 
     def get_account_info(self):
@@ -250,6 +258,7 @@ class InvestmentAccount(BankAccount):
         new_asset_balance = check_amount(new_asset_balance)
         self._balance -= amount
         self.portfolio[asset] = new_asset_balance
+        self._record_balance_change(OperationAction.INVEST)
         return self.portfolio[asset]
 
     def withdraw(self, amount):
@@ -441,9 +450,23 @@ class Bank:
 
         # Проверка сработает и при прямом account.withdraw()/deposit()/invest().
         account._bank_guard = guard
+
+        def log_balance(action):
+            self.audit_log.record(
+                AuditEvent.BALANCE_CHANGED, client_id=client_id,
+                details={"account_number": account.account_number,
+                         "currency": account.currency.value,
+                         "balance": account.get_account_info()["balance"],
+                         "action": action.value},
+                timestamp=self._current_time(),
+            )
+
+        account._bank_balance_logger = log_balance
         self.audit_log.record(
             AuditEvent.ACCOUNT_OPENED, client_id=client_id,
-            details={"account_number": account.account_number, "type": account_type},
+            details={"account_number": account.account_number, "type": account_type,
+                     "currency": account.currency.value,
+                     "balance": account.get_account_info()["balance"]},
             timestamp=self._current_time(),
         )
         return account
@@ -595,6 +618,8 @@ class Bank:
         # В однопоточном приложении после этих расчётов нет отказных проверок.
         sender._balance = sender_balance
         recipient._balance = recipient_balance
+        sender._record_balance_change(OperationAction.TRANSFER)
+        recipient._record_balance_change(OperationAction.TRANSFER)
         self.risk_analyzer.mark_completed(assessment)
         self.audit_log.record(
             AuditEvent.TRANSFER_COMPLETED, client_id=client_id, transaction_id=transaction_id,

@@ -88,6 +88,7 @@ class SecurityReason(TextEnum):
 
 
 class AuditEvent(TextEnum):
+    BALANCE_CHANGED = "balance_changed"
     TRANSACTION_QUEUED = "transaction_queued"
     TRANSACTION_CANCELLED = "transaction_cancelled"
     SECURITY_EVENT = "security_event"
@@ -104,6 +105,10 @@ class AuditEvent(TextEnum):
 
 
 class OperationAction(TextEnum):
+    DEPOSIT = "deposit"
+    WITHDRAW = "withdraw"
+    INVEST = "invest"
+    TRANSFER = "transfer"
     LOGIN = "login"
     ACCESS = "access"
     ACCOUNT_ACCESS = "account_access"
