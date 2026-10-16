@@ -88,6 +88,8 @@ class SecurityReason(TextEnum):
 
 
 class AuditEvent(TextEnum):
+    TRANSACTION_QUEUED = "transaction_queued"
+    TRANSACTION_CANCELLED = "transaction_cancelled"
     SECURITY_EVENT = "security_event"
     CLIENT_ADDED = "client_added"
     LOGIN_SUCCESS = "login_success"
